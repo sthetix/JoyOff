@@ -3,7 +3,10 @@
 #include <cstdarg>
 #include <cstdio>
 
+inline bool debugLoggingEnabled = false;
+
 inline bool DebugLog(const char* format, ...) {
+    if (!debugLoggingEnabled) return false;
     FILE* file = std::fopen("sdmc:/joyoff-debug.txt", "a");
     if (!file) return false;
     const auto milliseconds = static_cast<unsigned long long>(armTicksToNs(armGetSystemTick()) / 1000000);
@@ -17,6 +20,7 @@ inline bool DebugLog(const char* format, ...) {
 }
 
 inline void DebugBytes(const char* label, const void* buffer, size_t size) {
+    if (!debugLoggingEnabled) return;
     const auto* data = static_cast<const u8*>(buffer);
     char hex[3 * 64 + 1]{};
     const size_t count = size < 64 ? size : 64;
@@ -25,6 +29,7 @@ inline void DebugBytes(const char* label, const void* buffer, size_t size) {
 }
 
 inline void DebugDevice(const char* source, const BtmConnectedDeviceV13& device) {
+    if (!debugLoggingEnabled) return;
     const auto* address = reinterpret_cast<const u8*>(&device.address);
     DebugLog("%s address=%02X:%02X:%02X:%02X:%02X:%02X profile=%u name=\"%.*s\"",
         source, address[0], address[1], address[2], address[3], address[4], address[5],

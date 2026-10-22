@@ -117,6 +117,5 @@ void JoyConIcon(NVGcontext* vg, float x, float y, float scale, bool right,
         Circle(vg, 95.5f, 305.5f, 8.5f, legend);
         Circle(vg, 95.5f, 305.5f, 6.2f, controls);
     }
-    // Body color is preserved after shutdown; the separate status indicator conveys state.
     nvgRestore(vg);
 }

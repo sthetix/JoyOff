@@ -7,6 +7,7 @@
 
 namespace {
 constexpr u64 timeoutNs = 2000000000ULL;
+constexpr u64 disconnectTimeoutNs = 5000000000ULL;
 u64 Now() { return armTicksToNs(armGetSystemTick()); }
 bool SameAddress(const BtdrvAddress& a, const BtdrvAddress& b) {
     return std::memcmp(&a, &b, sizeof(a)) == 0;
@@ -129,6 +130,16 @@ Result JoyBackend::Open() {
     return 0;
 }
 
+bool JoyBackend::LoggingEnabled() const {
+    return debugLoggingEnabled;
+}
+
+void JoyBackend::SetLogging(bool enabled) {
+    if (running) return;
+    debugLoggingEnabled = enabled;
+    logAvailable = enabled && DebugLog("=== TXT logging enabled | build %s %s | Refresh to capture discovery ===", __DATE__, __TIME__);
+}
+
 void JoyBackend::Refresh() {
     if (running) return;
     const u32 version = hosversionGet();
@@ -206,7 +217,6 @@ void JoyBackend::Refresh() {
             target.done = true;
             target.status = target.wired ? "Attached to tablet. Detach to turn off."
                 : "Waiting for an active Bluetooth connection...";
-            ReadColors(target);
             targets.push_back(target);
             continue;
         }
@@ -329,6 +339,9 @@ bool JoyBackend::Observe() {
         __atomic_load_n(&ring->read_offset, __ATOMIC_ACQUIRE), sizeof(ring->data));
     if (offset < 0 || static_cast<size_t>(offset) >= sizeof(ring->data)) {
         message = "Unsupported Bluetooth report buffer. No commands sent.";
+        for (auto& target : targets) {
+            if (!target.done) Fail(target, message.c_str());
+        }
         return false;
     }
     cursor = static_cast<size_t>(offset);
@@ -363,7 +376,7 @@ bool JoyBackend::Send(JoyTarget& target, u8 command, u8 argument) {
     report.data[10] = command;
     report.data[11] = argument;
     target.sentTick = armGetSystemTick();
-    target.deadline = Now() + timeoutNs;
+    target.deadline = Now() + (command == 0x06 ? disconnectTimeoutNs : timeoutNs);
     const Result rc = btdrvWriteHidData(target.address, &report);
     const auto* address = reinterpret_cast<const u8*>(&target.address);
     DebugLog("SEND address=%02X:%02X:%02X:%02X:%02X:%02X name=%s phase=%d subcmd=%02X arg=%02X counter=%u rc=0x%08X",

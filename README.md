@@ -11,7 +11,7 @@ A simple Nintendo Switch homebrew app that puts original Joy-Con controllers int
 - Multiple controller pages with a miniature Joy-Con legend, L/R navigation, and touch swipes.
 - Turn off all ready controllers across every page with one confirmation.
 - Touch controls remain available after the controllers disconnect.
-- TXT diagnostics saved to `sdmc:/joyoff-debug.txt`.
+- Optional TXT diagnostics saved to `sdmc:/joyoff-debug.txt`; logging is off by default.
 
 ## Requirements
 
@@ -23,7 +23,7 @@ MissionControl is not required. Pro Controllers, Joy-Con 2, and third-party cont
 
 ## Usage
 
-1. Copy `JoyOff.nro` to `sdmc:/switch/JoyOff/JoyOff.nro` and launch it through the Homebrew Menu.
+1. Extract the release ZIP to the SD card root (it contains only `switch/JoyOff.nro`) and launch JoyOff through the Homebrew Menu.
 2. Detach your Joy-Cons and connect them wirelessly. Detection refreshes automatically.
 3. Press **Minus (-)** or tap **Turn Off All**, then confirm.
 4. Check the per-controller results. Use the touchscreen to exit after the controllers disconnect.
@@ -36,27 +36,30 @@ MissionControl is not required. Pro Controllers, Joy-Con 2, and third-party cont
 | B / Plus (+) | Cancel, return, or exit |
 | X | Refresh detection |
 | Y | Open diagnostics |
+| ZL | Open About |
+| Minus (-), in Diagnostics | Enable / disable TXT logging while idle |
 | L / R | Previous / next controller page |
 | Touch | Buttons, miniature page legend, and horizontal page swipes |
 
 Controller pages group left and right devices for display; they do not establish controller pairs. Colors come from stored HID color information and may differ from replacement shells.
+
+TXT logging is off at each launch. Open Diagnostics, press Minus or tap the logging toggle to enable it, then use X / Refresh to capture discovery. Disabling logging leaves existing log files intact.
 
 ## Build
 
 Requires devkitPro/devkitA64, libnx, deko3d, GLM headers, and `uam`. The NanoVG/deko3d renderer is included.
 
 ```sh
-cd switch
 make -j4 release
 ```
 
-The output includes `JoyOff.nro`, an SD-card package, and a corresponding source archive. See the [technical README](switch/README.md) for implementation details and diagnostic information.
+The output includes `JoyOff.nro`, `JoyOff-1.0.0.zip` containing only `switch/JoyOff.nro`, and `JoyOff-1.0.0-source.zip` with the corresponding sources and license notices. See the [technical README](docs/technical.md) for implementation details and diagnostic information.
 
 ## Credits and license
 
-The Switch application is distributed under [LGPLv3](switch/COPYING), with the accompanying [GPLv3 terms](switch/COPYING.GPL). Graphics initialization and UI helpers are adapted from Switch 90DNS Tester by Nexrem and contributors. Bundled NanoVG/deko3d code retains its original notices and credits Adubbz, Mikko Mononen, and fincs.
+The Switch application is distributed under [LGPLv3](COPYING), with the accompanying [GPLv3 terms](COPYING.GPL). Graphics initialization and UI helpers are adapted from Switch 90DNS Tester by Nexrem and contributors. Bundled NanoVG/deko3d code retains its original notices and credits Adubbz, Mikko Mononen, and fincs.
 
-Joy-Con illustrations are adapted from [0 Noctis 0's Wikimedia illustration](https://commons.wikimedia.org/wiki/File:Nintendo_Switch_Joy-Con_illustration.svg), licensed CC BY-SA 4.0. See [art attribution](switch/COPYING.ART).
+Joy-Con illustrations are adapted from [0 Noctis 0's Wikimedia illustration](https://commons.wikimedia.org/wiki/File:Nintendo_Switch_Joy-Con_illustration.svg), licensed CC BY-SA 4.0. See [art attribution](COPYING.ART).
 
 Protocol and implementation references include [jc_toolkit](https://github.com/CTCaer/jc_toolkit), [dekuNukem's reverse-engineering notes](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering), [libnx](https://github.com/switchbrew/libnx), and [MissionControl](https://github.com/ndeadly/MissionControl).
 

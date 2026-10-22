@@ -44,10 +44,10 @@ DATA		:=	data
 INCLUDES	:=	include nanovg/include nanovg/include/nanovg nanovg/include/nanovg/framework
 ROMFS		:=	romfs
 
-APP_VERSION := 0.1.0
+APP_VERSION := 1.0.0
 APP_TITLE   := JoyOff
 APP_AUTHOR  := STHETIX
-NO_ICON     := 1
+ICON        := assets/icon.jpg
 
 #---------------------------------------------------------------------------------
 # options for code generation
@@ -59,7 +59,7 @@ CFLAGS	:=	-g -Wall -O2 -ffunction-sections \
 
 CFLAGS	+=	$(INCLUDE) -D__SWITCH__
 
-CXXFLAGS	:= $(CFLAGS) -std=gnu++17 -fno-rtti -fno-exceptions
+CXXFLAGS	:= $(CFLAGS) -std=gnu++17 -fno-rtti -fno-exceptions -DJOYOFF_VERSION=\"$(APP_VERSION)\"
 
 ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
@@ -189,19 +189,15 @@ $(BUILD): $(SHADERS)
 #---------------------------------------------------------------------------------
 dist: $(BUILD)
 	@echo Creating distribution package...
-	@mkdir -p switch/$(TARGET)
-	@cp $(TARGET).nro switch/$(TARGET)/
-	@cp README.md COPYING COPYING.GPL COPYING.ART switch/$(TARGET)/
-	@mkdir -p switch/$(TARGET)/licenses
-	@cp nanovg/LICENSE switch/$(TARGET)/licenses/NanoVG.txt
-	@cp nanovg/source/framework/LICENSE switch/$(TARGET)/licenses/Framework.txt
-	@echo Package created in switch/$(TARGET)/$(TARGET).nro
+	@mkdir -p switch
+	@cp $(TARGET).nro switch/$(TARGET).nro
+	@echo Package created in switch/$(TARGET).nro
 
 #---------------------------------------------------------------------------------
 release: dist
 	@echo Creating zip archive...
-	@zip -r $(TARGET)-$(APP_VERSION).zip switch/
-	@zip -r $(TARGET)-$(APP_VERSION)-source.zip source/ nanovg/ assets/ Makefile README.md COPYING COPYING.GPL COPYING.ART
+	@zip -q - switch/$(TARGET).nro > $(TARGET)-$(APP_VERSION).zip
+	@zip -r $(TARGET)-$(APP_VERSION)-source.zip source/ nanovg/ assets/ docs/ Makefile README.md COPYING COPYING.GPL COPYING.ART
 	@echo Created $(TARGET)-$(APP_VERSION).zip
 
 #---------------------------------------------------------------------------------
@@ -211,7 +207,7 @@ release: dist
 else
 .PHONY:	all
 
-$(OUTPUT).nro: $(ROMFS_DEPS)
+$(OUTPUT).nro: $(ROMFS_DEPS) $(APP_ICON)
 
 DEPENDS	:=	$(OFILES:.o=.d)
 
@@ -240,7 +236,7 @@ endif
 
 $(OUTPUT).elf	:	$(OFILES)
 
-$(OFILES_SRC)	: $(HFILES_BIN)
+$(OFILES_SRC)	: $(HFILES_BIN) $(TOPDIR)/Makefile
 
 #---------------------------------------------------------------------------------
 # you need a rule like this for each extension you use as binary data

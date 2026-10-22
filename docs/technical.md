@@ -9,11 +9,13 @@ A homebrew application for original Joy-Con L/R connected over Bluetooth. Requir
 3. **Minus (-) / Turn Off All** opens a confirmation listing the persistent effects. Press Minus again or tap Confirm to proceed; B cancels.
 4. Read the per-device results. Tap Exit after the controllers disconnect; touch remains available.
 
+The home screen footer contains Diagnostics (Y), About (ZL), Turn Off All (Minus), and Exit (Plus). About opens a modal popup showing the developer, build version, and a short description. Tap Close or press B / Plus to dismiss it; ZL only opens the popup. The Diagnostics footer contains Refresh (X), TXT Logging (Minus), Back to JoyOff (Y), and Back (B). All footer controls support touch.
+
 The main screen uses vector Joy-Con illustrations with separate left/right states: detached input pending, attached, checking/working, ready, low power, or error. Press **Minus (-)** to open the confirmation and press it again to execute. **B / Plus (+)** cancels or exits. Touch offers the same actions, including when only a right Joy-Con is available. **Y / Diagnostics** opens technical details, controller addresses, per-device results, firmware, and TXT log status; B, Plus, or Y returns to the main screen. Diagnostics supports four devices per page using L/R or tapping the left/right halves of its panel. X / Refresh remains available when idle. The Bluetooth backend and command sequence are unchanged by this visual update.
 
 The illustrations sit toward the center, with left status text to the left and right status text to the right. Front-view proportions follow 0 Noctis 0's Wikimedia illustration; the drawings retain the real L/R button arrangements, directional arrows, ABXY labels, shoulder details, and distinct Home/Capture buttons. See `COPYING.ART` for attribution and the illustration license.
 
-Body and button colors are read from the matching Npad slot using `hidGetNpadControllerColorSplit` for handheld/paired controllers and `hidGetNpadControllerColorSingle` for standalone L/R controllers. These are optional reads from HID state, with no additional Bluetooth or SPI commands. Failed color reads use neutral gray and do not block Turn Off. Successfully read colors remain on the illustrations after shutdown until the device list is refreshed. Diagnostics shows the RGB values and TXT logs record the raw HID values. Stored colors may differ from replacement shells.
+Body and button colors are read from the matching Npad slot using `hidGetNpadControllerColorSplit` for handheld/paired controllers and `hidGetNpadControllerColorSingle` for standalone L/R controllers. These are optional reads from HID state, with no additional Bluetooth or SPI commands. Failed color reads use neutral gray and do not block Turn Off. After low power and disconnect are confirmed, the controller illustrations and miniature legend return to neutral gray. Stored color values remain available in Diagnostics. Diagnostics shows the RGB values and TXT logs record the raw HID values. Stored colors may differ from replacement shells.
 
 Each home-screen card represents one physical controller with its own color, status, and address (or pad ID when no address is available). The home screen shows one left and one right device per page, sorted by Bluetooth address and then pad ID. A single L/R pair needs only one page. Extra devices add pages controlled by L/R, the miniature page legend, or horizontal swipes. Page positions do not establish pairing between controllers. Empty slots are labeled when one side has fewer devices. Turn Off All and its confirmation show the number of ready devices across every page and process all of them, not just the current page. The global result message also considers every device. Page navigation does not send controller commands.
 
@@ -25,7 +27,7 @@ Input configuration includes standalone Joy-Con Left and Right (`NpadStandard`),
 
 The numeric value returned by `hidsysGetUniquePadInterface` is logged but does not decide wired/wireless readiness or disconnect success. On the observed FW 23.0.1 setup its values disagreed with the assumed `HidNpadInterfaceType` interpretation and BTM connectivity. The active Npad connected/wired attributes are authoritative for these decisions; a failed interface-metadata query cannot block them.
 
-The app sends an identity request (`02`), resets saved pairing (`07`), enables shipment low power (`08 01`), and disconnects (`06 00`). Each device advances independently as matching acknowledgements arrive. Failed or unconfirmed steps stop that device; other devices continue. Successful Bluetooth disconnect is checked using HID pad IDs and interfaces. A new Refresh is required before another run. Partial failure can leave pairing cleared without completing low power/disconnect.
+The app sends an identity request (`02`), resets saved pairing (`07`), enables shipment low power (`08 01`), and disconnects (`06 00`). Each device advances independently as matching acknowledgements arrive. Failed or unconfirmed steps stop that device; other devices continue. Successful Bluetooth disconnect is checked using HID pad IDs and current connected/wired attributes for up to five seconds after the disconnect request. This wait does not resend commands. A new Refresh is required before another run. Partial failure can leave pairing cleared without completing low power/disconnect.
 
 Only a missing Device Info (`02`) acknowledgement is automatically retried, at most twice with the existing two-second timeout per attempt. The current wireless input connection is checked before a retry. Send failures, rejected commands, and identity mismatches stop immediately. Pairing reset (`07`), shipment mode (`08`), and disconnect (`06`) are never automatically retried. The completed Turn Off result reports succeeded, failed, and skipped devices across all pages. Devices excluded before the operation, such as attached or identity-failed controllers, count as skipped.
 
@@ -33,9 +35,11 @@ Attach the Joy-Cons to a Switch to wake and pair again. Controllers still on the
 
 ## TXT diagnostics
 
-Each Refresh appends a timestamped diagnostic section to `sdmc:/joyoff-debug.txt` (the SD card root). The screen indicates whether the initial log write succeeded. The file is closed after each log entry so completed entries remain available after exiting the app. Entries include build date/time, firmware, applet type, service results, HID and all-profile connected-device counts, Bluetooth addresses, names and raw name bytes, filtering decisions, command results, matching acknowledgements, retries, ring errors, timeouts, and operation results. Routine input reports and unmatched replies are not written during ACK processing, reducing synchronous SD writes. Rejected-command replies retain a short raw dump. It does not log Bluetooth link keys. The all-profile enumeration is diagnostic only and does not change target selection. Refresh appends a new section without deleting previous logs.
+TXT logging is disabled at each launch. In Diagnostics, press Minus or tap the logging toggle while idle to enable or disable it. Enable logging, then use X / Refresh to capture discovery. Existing log files are preserved when disabled.
 
-Build the updated source, open JoyOff, wait for detection to finish, tap Refresh once, then exit and inspect `/joyoff-debug.txt`. Turning off is not required to diagnose detection.
+While logging is enabled, each Refresh appends a timestamped diagnostic section to `sdmc:/joyoff-debug.txt` (the SD card root). The screen indicates whether the initial log write succeeded. The file is closed after each log entry so completed entries remain available after exiting the app. Entries include build date/time, firmware, applet type, service results, HID and all-profile connected-device counts, Bluetooth addresses, names and raw name bytes, filtering decisions, command results, matching acknowledgements, retries, ring errors, timeouts, and operation results. Routine input reports and unmatched replies are not written during ACK processing, reducing synchronous SD writes. Rejected-command replies retain a short raw dump. It does not log Bluetooth link keys. The all-profile enumeration is diagnostic only and does not change target selection. Refresh appends a new section without deleting previous logs.
+
+Build the updated source, open JoyOff, enable TXT logging in Diagnostics, wait for detection to finish, tap Refresh once, then exit and inspect `/joyoff-debug.txt`. Turning off is not required to diagnose detection.
 
 ## Bluetooth implementation
 
@@ -51,9 +55,9 @@ Requires devkitPro/devkitA64, libnx, deko3d, GLM headers, and `uam`. The NanoVG/
 make
 ```
 
-Outputs `JoyOff.nro` and `JoyOff-0.1.0.zip`, containing `switch/JoyOff/JoyOff.nro` and license notices for the SD card. `JoyOff-0.1.0-source.zip` contains the corresponding buildable application and renderer sources.
+Outputs `JoyOff.nro` and `JoyOff-1.0.0.zip`, containing only `switch/JoyOff.nro`. `JoyOff-1.0.0-source.zip` contains the corresponding buildable application and renderer sources with license notices.
 
-The initial development build succeeded with devkitPro's `devkita64:20260219` Docker image. Compiler warnings occur in the bundled GLM/STB/fontstash renderer dependencies. Basic shutdown and the graphical interface have been tested on hardware during development. The latest bounded identity retries and reduced logging still require hardware validation.
+The initial development build succeeded with devkitPro's `devkita64:20260219` Docker image. Compiler warnings occur in the bundled GLM/STB/fontstash renderer dependencies. Basic shutdown and the graphical interface have been tested on hardware during development. Device Info timeout recovery has also been observed in the hardware log. The five-second disconnect observation window and final release UI still require hardware validation.
 
 ## Credits and license
 

@@ -60,6 +60,8 @@ public:
     void Update();
     void AutoRefresh(bool paused);
     void ExplainUnavailable();
+    void SetLogging(bool enabled);
+    bool LoggingEnabled() const;
     bool Running() const { return running; }
     bool Ready() const;
     const std::vector<JoyTarget>& Targets() const { return targets; }

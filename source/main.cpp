@@ -121,7 +121,7 @@ public:
         stencilMemory.destroy();
     }
 
-    void Draw(const JoyBackend& backend, bool confirm, bool diagnostics, unsigned page, unsigned controllerPage) {
+    void Draw(const JoyBackend& backend, bool confirm, bool diagnostics, bool about, unsigned page, unsigned controllerPage) {
         queue.waitIdle();
         commands.clear();
         const int slot = queue.acquireImage(swapchain);
@@ -144,6 +144,7 @@ public:
         Text(vg, 76, 37, diagnostics ? "Diagnostics" : "JoyOff", 36);
         if (diagnostics) DrawDiagnostics(vg, backend, atmosphere, page);
         else DrawHome(vg, backend, controllerPage);
+        if (about) DrawAbout(vg);
         if (confirm) DrawConfirmation(vg, backend);
         nvgEndFrame(vg);
         queue.presentImage(swapchain, slot);
@@ -166,7 +167,7 @@ int main(int argc, char** argv) {
         padInitializeAny(&pad);
         hidInitializeTouchScreen();
         backend.Refresh();
-        bool touching = false, confirm = false, diagnostics = false;
+        bool touching = false, confirm = false, diagnostics = false, about = false;
         unsigned page = 0;
         unsigned controllerPage = 0;
         bool trackingSwipe = false;
@@ -183,8 +184,8 @@ int main(int argc, char** argv) {
             const bool pressed = touch.count && !touching;
             const bool released = !touch.count && touching;
             touching = touch.count != 0;
-            if (confirm || diagnostics || touch.count > 1) trackingSwipe = false;
-            if (pressed && !confirm && !diagnostics && touch.count == 1) {
+            if (confirm || diagnostics || about || touch.count > 1) trackingSwipe = false;
+            if (pressed && !confirm && !diagnostics && !about && touch.count == 1) {
                 swipeStartX = swipeLastX = static_cast<int>(touch.touches[0].x);
                 swipeStartY = swipeLastY = static_cast<int>(touch.touches[0].y);
                 trackingSwipe = controllerPages > 1 && swipeStartX >= 56 && swipeStartX <= 1224 &&
@@ -206,13 +207,23 @@ int main(int argc, char** argv) {
             if (pressed) {
                 const auto x = touch.touches[0].x;
                 const auto y = touch.touches[0].y;
-                if (confirm && y >= 450 && y <= 502) {
+                if (about) {
+                    if (x >= 700 && x <= 1000 && y >= 530 && y <= 582) down |= HidNpadButton_B;
+                } else if (confirm && y >= 450 && y <= 502) {
                     if (x >= 200 && x <= 600) down |= HidNpadButton_B;
                     if (x >= 640 && x <= 1080) down |= HidNpadButton_Minus;
                 } else if (!confirm && y >= 644 && y <= 696) {
-                    if (x >= 56 && x <= 284) down |= diagnostics ? HidNpadButton_X : HidNpadButton_Y;
-                    if (x >= 304 && x <= 884) down |= diagnostics ? HidNpadButton_Y : HidNpadButton_Minus;
-                    if (x >= 904 && x <= 1224) down |= diagnostics ? HidNpadButton_B : HidNpadButton_Plus;
+                    if (diagnostics) {
+                        if (x >= 56 && x <= 284) down |= HidNpadButton_X;
+                        if (x >= 304 && x <= 624) down |= HidNpadButton_Minus;
+                        if (x >= 644 && x <= 972) down |= HidNpadButton_Y;
+                        if (x >= 992 && x <= 1224) down |= HidNpadButton_B;
+                    } else {
+                        if (x >= 56 && x <= 300) down |= HidNpadButton_Y;
+                        if (x >= 320 && x <= 520) down |= HidNpadButton_ZL;
+                        if (x >= 540 && x <= 972) down |= HidNpadButton_Minus;
+                        if (x >= 992 && x <= 1224) down |= HidNpadButton_Plus;
+                    }
                 } else if (!confirm && !diagnostics && x >= 56 && x <= 240 && y >= 594 && y <= 630) {
                     down |= HidNpadButton_X;
                 } else if (!confirm && !diagnostics && controllerPages > 1 && y >= LegendTop && y <= LegendBottom &&
@@ -223,9 +234,12 @@ int main(int argc, char** argv) {
                     down |= x < 640 ? HidNpadButton_L : HidNpadButton_R;
                 }
             }
-            if (diagnostics) {
+            if (about) {
+                if (down & (HidNpadButton_B | HidNpadButton_Plus)) about = false;
+            } else if (diagnostics) {
                 if (down & (HidNpadButton_Y | HidNpadButton_B | HidNpadButton_Plus)) diagnostics = false;
                 else if ((down & HidNpadButton_X) && !backend.Running()) backend.Refresh();
+                else if ((down & HidNpadButton_Minus) && !backend.Running()) backend.SetLogging(!backend.LoggingEnabled());
                 const unsigned pages = std::max(1u, static_cast<unsigned>((backend.Targets().size() + 3) / 4));
                 page = std::min(page, pages - 1);
                 if ((down & HidNpadButton_L) && page) --page;
@@ -236,6 +250,8 @@ int main(int argc, char** argv) {
                     confirm = false;
                     backend.Start();
                 }
+            } else if (down & HidNpadButton_ZL) {
+                about = true;
             } else if (down & HidNpadButton_Y) {
                 diagnostics = true;
                 page = 0;
@@ -249,11 +265,11 @@ int main(int argc, char** argv) {
             } else if (down & HidNpadButton_Minus) {
                 backend.ExplainUnavailable();
             }
-            if (!diagnostics && !confirm) {
+            if (!diagnostics && !confirm && !about) {
                 if ((down & HidNpadButton_L) && controllerPage) --controllerPage;
                 if ((down & HidNpadButton_R) && controllerPage + 1 < controllerPages) ++controllerPage;
             }
-            display.Draw(backend, confirm, diagnostics, page, controllerPage);
+            display.Draw(backend, confirm, diagnostics, about, page, controllerPage);
         }
         // Complete any already-started persistent command sequence before releasing services.
         while (backend.Running()) { backend.Update(); svcSleepThread(1000000); }

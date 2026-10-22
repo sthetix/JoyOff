@@ -82,10 +82,10 @@ void Line(NVGcontext* vg, float x1, float y1, float x2, float y2, NVGcolor color
 
 #include "joycon_art.hpp"
 
-void TextBox(NVGcontext* vg, float x, float y, float width, const char* text, float size, NVGcolor color) {
+void TextBox(NVGcontext* vg, float x, float y, float width, const char* text, float size, NVGcolor color, bool alignRight = false) {
     nvgFontFace(vg, "switch-standard");
     nvgFontSize(vg, size);
-    nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+    nvgTextAlign(vg, (alignRight ? NVG_ALIGN_RIGHT : NVG_ALIGN_LEFT) | NVG_ALIGN_TOP);
     nvgFillColor(vg, color);
     nvgTextBox(vg, x, y, width, text, nullptr);
 }
@@ -94,7 +94,7 @@ void Button(NVGcontext* vg, float x, float y, float w, const char* key, const ch
     Rectangle(vg, x, y, w, 52, primary && active ? Theme::Accent : Theme::Selected, 12);
     const NVGcolor ink = primary && active ? Theme::Background : active ? Theme::Foreground : Theme::Muted;
     Rectangle(vg, x + 14, y + 12, 28, 28, primary && active ? nvgRGBA(0, 0, 0, 20) : Theme::Panel, 7);
-    Text(vg, x + 22, y + 15, key, 18, ink);
+    Text(vg, x + (std::strlen(key) > 1 ? 18 : 22), y + 15, key, std::strlen(key) > 1 ? 14 : 18, ink);
     Text(vg, x + 54, y + 15, label, 19, ink);
 }
 
@@ -115,19 +115,24 @@ void DrawCard(NVGcontext* vg, const JoyBackend& backend, u8 side, float x, unsig
     const auto state = summary.state;
     const NVGcolor color = StateColor(state);
     Rectangle(vg, x, 142, 568, 350, Theme::Panel, 20);
-    const float textX = x + (side == 1 ? 26 : 160);
-    const float iconX = x + (side == 1 ? 450 : 32);
+    const bool left = side == 1;
+    const float textX = x + (left ? 58 : 160);
+    const float iconWidth = 136.512f * 0.96f * 0.7f;
+    const float iconX = x + (left ? 568 - 32 - iconWidth : 32);
+    const auto cardText = [&](float y, const char* text, float size, NVGcolor ink) {
+        TextBox(vg, textX, y, 350, text, size, ink, left);
+    };
     char label[96];
     if (target) std::snprintf(label, sizeof(label), "%s JOY-CON  #%u", side == 1 ? "LEFT" : "RIGHT", page + 1);
     else std::snprintf(label, sizeof(label), "%s JOY-CON", side == 1 ? "LEFT" : "RIGHT");
-    Text(vg, textX, 164, label, 16, Theme::Muted);
-    Circle(vg, textX + 328, 176, 5, color);
-    JoyConIcon(vg, iconX, 193, 0.96f, side == 2, summary.colorsKnown, summary.bodyColor, summary.buttonsColor);
+    cardText(164, label, 16, Theme::Muted);
+    Circle(vg, textX + (left ? 22 : 328), 176, 5, color);
+    JoyConIcon(vg, iconX, 193, 0.96f, side == 2, summary.colorsKnown && target && !target->wired && state != CardState::Off, summary.bodyColor, summary.buttonsColor);
     const bool emptyPageSlot = !target && ControllerPageCount(backend) > 1;
     const char* title = emptyPageSlot ? "No device on page" : state == CardState::Attached ? "Detach first" : state == CardState::Ready ? "Ready"
         : state == CardState::Working ? "Working..." : state == CardState::Off ? "Low power"
         : state == CardState::Error ? "Needs attention" : state == CardState::Waiting ? "Connecting..." : "Not connected";
-    Text(vg, textX, 226, title, 28, color);
+    cardText(226, title, 28, color);
     const char* note = emptyPageSlot ? "No controller on this side of this page. Use L / R to view other devices."
         : state == CardState::Attached ? "Remove from the console rails. Detection updates automatically."
         : state == CardState::Ready ? "Connected over Bluetooth. Ready for storage."
@@ -136,18 +141,20 @@ void DrawCard(NVGcontext* vg, const JoyBackend& backend, u8 side, float x, unsig
         : state == CardState::Error ? "A step could not be confirmed. Open Diagnostics for the result."
         : state == CardState::Waiting ? "Waiting for an active wireless connection."
         : "Connect a Joy-Con wirelessly. This screen updates automatically.";
-    TextBox(vg, textX, 276, 350, note, 20, Theme::Muted);
+    cardText(276, note, 20, Theme::Muted);
     if (state == CardState::Off) {
-        Circle(vg, textX + 15, 395, 15, Theme::Selected);
-        Line(vg, textX + 8, 395, textX + 13, 400, Theme::Accent, 3);
-        Line(vg, textX + 13, 400, textX + 22, 389, Theme::Accent, 3);
-        Text(vg, textX + 40, 385, "Ready to put away", 18, Theme::Accent);
+        const float checkX = textX + (left ? 335 : 15);
+        Circle(vg, checkX, 395, 15, Theme::Selected);
+        Line(vg, checkX - 7, 395, checkX - 2, 400, Theme::Accent, 3);
+        Line(vg, checkX - 2, 400, checkX + 7, 389, Theme::Accent, 3);
+        TextBox(vg, textX + (left ? 0 : 40), 385, 310, "Ready to put away", 18, Theme::Accent, left);
     } else if (state == CardState::Ready) {
-        Rectangle(vg, textX, 383, 160, 32, Theme::Selected, 16);
-        Text(vg, textX + 16, 389, "Bluetooth ready", 16, Theme::Accent);
+        const float badgeX = textX + (left ? 190 : 0);
+        Rectangle(vg, badgeX, 383, 160, 32, Theme::Selected, 16);
+        Text(vg, badgeX + 16, 389, "Bluetooth ready", 16, Theme::Accent);
     }
     if (summary.count && !summary.colorsKnown)
-        Text(vg, textX, 429, "Color unavailable", 15, Theme::Muted);
+        cardText(429, "Color unavailable", 15, Theme::Muted);
     if (target) {
         const BtdrvAddress empty{};
         if (std::memcmp(&target->address, &empty, sizeof(empty)) != 0) {
@@ -155,7 +162,7 @@ void DrawCard(NVGcontext* vg, const JoyBackend& backend, u8 side, float x, unsig
             std::snprintf(label, sizeof(label), "Device %02X:%02X:%02X:%02X:%02X:%02X",
                 address[0], address[1], address[2], address[3], address[4], address[5]);
         } else std::snprintf(label, sizeof(label), "Pad ID %016llX", static_cast<unsigned long long>(target->padId.id));
-        Text(vg, textX, 451, label, 14, Theme::Muted);
+        cardText(451, label, 14, Theme::Muted);
     }
 }
 
@@ -188,11 +195,27 @@ void DrawDiagnostics(NVGcontext* vg, const JoyBackend& backend, const char* atmo
     std::snprintf(info, sizeof(info), "Page %u / %u   |   L / R: change page", page + 1, totalPages);
     Text(vg, 80, 505, info, 16, Theme::Muted);
     TextBox(vg, 56, 552, 1168, backend.Message().c_str(), 17, Theme::Muted);
-    Text(vg, 56, 606, backend.LogAvailable() ? "TXT log: sdmc:/joyoff-debug.txt" : "TXT log unavailable: cannot write to SD", 16,
-        backend.LogAvailable() ? Theme::Muted : Theme::Warning);
+    Text(vg, 56, 606, !backend.LoggingEnabled() ? "Enable TXT logging, then X: Refresh to capture logs"
+        : backend.LogAvailable() ? "sdmc:/joyoff-debug.txt" : "Cannot write TXT log to SD", 16,
+        backend.LoggingEnabled() && !backend.LogAvailable() ? Theme::Warning : Theme::Muted);
     Button(vg, 56, 644, 228, "X", "Refresh", !backend.Running());
-    Button(vg, 304, 644, 580, "Y", "Back to JoyOff", true);
-    Button(vg, 904, 644, 320, "B", "Back", true);
+    Button(vg, 304, 644, 320, "-", backend.LoggingEnabled() ? "TXT Logging: ON" : "TXT Logging: OFF", !backend.Running());
+    Button(vg, 644, 644, 328, "Y", "Back to JoyOff", true);
+    Button(vg, 992, 644, 232, "B", "Back", true);
+}
+
+void DrawAbout(NVGcontext* vg) {
+    Rectangle(vg, 0, 0, Width, Height, nvgRGBA(0, 0, 0, 210), 0);
+    Rectangle(vg, 240, 110, 800, 500, Theme::Panel, 22);
+    Text(vg, 280, 140, "About JoyOff", 32, Theme::Accent);
+    Text(vg, 280, 200, "Developer: sthetix", 22);
+    Text(vg, 280, 238, "Version: " JOYOFF_VERSION, 22, Theme::Muted);
+    TextBox(vg, 280, 294, 720,
+        "Puts original wireless Joy-Con controllers into shipment low-power mode and disconnects them for shelf storage.", 22, Theme::Foreground);
+    TextBox(vg, 280, 388, 720,
+        "Saved Bluetooth pairing is cleared. Attach the controllers to a Switch to wake and pair again.", 18, Theme::Muted);
+    Text(vg, 280, 470, "github.com/sthetix/JoyOff", 18, Theme::Accent);
+    Button(vg, 700, 530, 300, "B", "Close", true);
 }
 
 void DrawHome(NVGcontext* vg, const JoyBackend& backend, unsigned page) {
@@ -241,9 +264,9 @@ void DrawHome(NVGcontext* vg, const JoyBackend& backend, unsigned page) {
             const JoyTarget* leftDevice = i < leftDevices.size() ? leftDevices[i] : nullptr;
             const JoyTarget* rightDevice = i < rightDevices.size() ? rightDevices[i] : nullptr;
             if (leftDevice) JoyConIcon(vg, x + 11, 593, 0.095f, false,
-                leftDevice->colorsKnown, leftDevice->bodyColor, leftDevice->buttonsColor);
+                leftDevice->colorsKnown && !leftDevice->wired && !(leftDevice->done && !leftDevice->failed && leftDevice->phase == 4), leftDevice->bodyColor, leftDevice->buttonsColor);
             if (rightDevice) JoyConIcon(vg, x + 27, 593, 0.095f, true,
-                rightDevice->colorsKnown, rightDevice->bodyColor, rightDevice->buttonsColor);
+                rightDevice->colorsKnown && !rightDevice->wired && !(rightDevice->done && !rightDevice->failed && rightDevice->phase == 4), rightDevice->bodyColor, rightDevice->buttonsColor);
             char number[16];
             std::snprintf(number, sizeof(number), "%u", i + 1);
             Text(vg, x + 20, 621, number, 10, i == page ? Theme::Accent : Theme::Muted);
@@ -254,10 +277,10 @@ void DrawHome(NVGcontext* vg, const JoyBackend& backend, unsigned page) {
     if (backend.Running()) std::snprintf(action, sizeof(action), "Working...");
     else if (ReadyCount(backend)) std::snprintf(action, sizeof(action), "Turn Off All (%u)", ReadyCount(backend));
     else std::snprintf(action, sizeof(action), "Turn Off All");
-    Rectangle(vg, 56, 644, 228, 52, Theme::Selected, 12);
-    Text(vg, 76, 659, "Y: Diagnostics", 19);
-    Button(vg, 304, 644, 580, "-", action, backend.Ready(), true);
-    Button(vg, 904, 644, 320, "+", "Exit", !backend.Running());
+    Button(vg, 56, 644, 244, "Y", "Diagnostics", true);
+    Button(vg, 320, 644, 200, "ZL", "About", true);
+    Button(vg, 540, 644, 432, "-", action, backend.Ready(), true);
+    Button(vg, 992, 644, 232, "+", "Exit", !backend.Running());
 }
 
 void DrawConfirmation(NVGcontext* vg, const JoyBackend& backend) {
