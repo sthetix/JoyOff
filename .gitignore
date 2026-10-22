@@ -1,0 +1,11 @@
+**/build/
+**/.vs/
+/switch/*.elf
+/switch/*.nacp
+/switch/*.map
+/switch/romfs/shaders/*.dksh
+
+/pc/
+/switch/*.nro
+/switch/*.zip
+/switch/switch/

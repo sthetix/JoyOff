@@ -1,0 +1,19 @@
+Joy-Con front-view illustration
+
+Reference: Nintendo Switch Joy-Con illustration.svg
+Original artist: 0 Noctis 0 (2017)
+https://commons.wikimedia.org/wiki/File:Nintendo_Switch_Joy-Con_illustration.svg
+https://upload.wikimedia.org/wikipedia/commons/3/33/Nintendo_Switch_Joy-Con_illustration.svg
+
+The original reference and the adapted illustration in source/joycon_art.hpp
+are provided under Creative Commons Attribution-ShareAlike 4.0 International:
+https://creativecommons.org/licenses/by-sa/4.0/
+
+Adaptation: front-view silhouettes converted to NanoVG paths, rescaled and
+mirrored for the right controller; controls simplified and redrawn for the
+application display; body and control colors supplied by controller HID data.
+The original artwork is retained in assets/joycon-reference.svg.
+
+This illustration notice is separate from the LGPLv3 application code and
+the bundled renderer licenses. No endorsement by the original artist or
+Nintendo is implied.
