@@ -117,12 +117,6 @@ void JoyConIcon(NVGcontext* vg, float x, float y, float scale, bool right,
         Circle(vg, 95.5f, 305.5f, 8.5f, legend);
         Circle(vg, 95.5f, 305.5f, 6.2f, controls);
     }
-    const char* shoulder = right ? "R" : "L";
-    nvgFontFace(vg, "switch-standard");
-    nvgFontSize(vg, 13);
-    nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-    nvgFillColor(vg, nvgLerpRGBA(body, controls, 0.7f));
-    nvgText(vg, right ? 42 : 94, 18, shoulder, nullptr);
     // Body color is preserved after shutdown; the separate status indicator conveys state.
     nvgRestore(vg);
 }
