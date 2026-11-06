@@ -9,7 +9,7 @@ A homebrew application for original Joy-Con L/R connected over Bluetooth. Requir
 3. **Minus (-) / Turn Off All** opens a confirmation listing the persistent effects. Press Minus again or tap Confirm to proceed; B cancels.
 4. Read the per-device results. Tap Exit after the controllers disconnect; touch remains available.
 
-The home screen footer contains Diagnostics (Y), About (ZL), Turn Off All (Minus), and Exit (Plus). About opens a modal popup showing the developer, build version, and a short description. Tap Close or press B / Plus to dismiss it; ZL only opens the popup. The Diagnostics footer contains Refresh (X), TXT Logging (Minus), Back to JoyOff (Y), and Back (B). All footer controls support touch.
+The home screen footer contains Diagnostics (Y), Colors (ZL), Turn Off All (Minus), About (ZR), and Exit (Plus), with equal button widths and spacing. About opens a modal popup showing the developer, build version, and a short description. Tap Close or press B / Plus to dismiss it; ZR only opens the popup. The Diagnostics footer contains Refresh (X), TXT Logging (Minus), Back to JoyOff (Y), and Back (B). All footer controls support touch.
 
 The main screen uses vector Joy-Con illustrations with separate left/right states: detached input pending, attached, checking/working, ready, low power, or error. Press **Minus (-)** to open the confirmation and press it again to execute. **B / Plus (+)** cancels or exits. Touch offers the same actions, including when only a right Joy-Con is available. **Y / Diagnostics** opens technical details, controller addresses, per-device results, firmware, and TXT log status; B, Plus, or Y returns to the main screen. Diagnostics supports four devices per page using L/R or tapping the left/right halves of its panel. X / Refresh remains available when idle. The Bluetooth backend and command sequence are unchanged by this visual update.
 
@@ -55,7 +55,7 @@ Requires devkitPro/devkitA64, libnx, deko3d, GLM headers, and `uam`. The NanoVG/
 make
 ```
 
-Outputs `JoyOff.nro` and `JoyOff-1.0.0.zip`, containing only `switch/JoyOff.nro`. `JoyOff-1.0.0-source.zip` contains the corresponding buildable application and renderer sources with license notices.
+Outputs `JoyOff.nro` and `JoyOff-1.5.0.zip`, containing only `switch/JoyOff.nro`. `JoyOff-1.5.0-source.zip` contains the corresponding buildable application and renderer sources with license notices.
 
 The initial development build succeeded with devkitPro's `devkita64:20260219` Docker image. Compiler warnings occur in the bundled GLM/STB/fontstash renderer dependencies. Basic shutdown and the graphical interface have been tested on hardware during development. Device Info timeout recovery has also been observed in the hardware log. The five-second disconnect observation window and final release UI still require hardware validation.
 

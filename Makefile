@@ -44,7 +44,7 @@ DATA		:=	data
 INCLUDES	:=	include nanovg/include nanovg/include/nanovg nanovg/include/nanovg/framework
 ROMFS		:=	romfs
 
-APP_VERSION := 1.0.0
+APP_VERSION := 1.5.0
 APP_TITLE   := JoyOff
 APP_AUTHOR  := STHETIX
 ICON        := assets/icon.jpg

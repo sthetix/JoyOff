@@ -10,6 +10,9 @@
 #include <vector>
 #include <cstdio>
 #include <cstring>
+#include <cerrno>
+#include <dirent.h>
+#include <sys/stat.h>
 #include "backend.hpp"
 
 namespace {
@@ -121,7 +124,7 @@ public:
         stencilMemory.destroy();
     }
 
-    void Draw(const JoyBackend& backend, bool confirm, bool diagnostics, bool about, unsigned page, unsigned controllerPage) {
+    void Draw(const JoyBackend& backend, bool confirm, bool diagnostics, bool about, unsigned page, unsigned controllerPage, const ColorEditor& editor) {
         queue.waitIdle();
         commands.clear();
         const int slot = queue.acquireImage(swapchain);
@@ -141,8 +144,9 @@ public:
         nvgBeginFrame(vg, Width, Height, 1);
         Rectangle(vg, 0, 0, Width, Height, Theme::Background, 0);
         Rectangle(vg, 56, 42, 4, 40, Theme::Accent, 2);
-        Text(vg, 76, 37, diagnostics ? "Diagnostics" : "JoyOff", 36);
-        if (diagnostics) DrawDiagnostics(vg, backend, atmosphere, page);
+        Text(vg, 76, 37, editor.open ? "Joy-Con Colors" : diagnostics ? "Diagnostics" : "JoyOff", 36);
+        if (editor.open) DrawColors(vg, backend, editor);
+        else if (diagnostics) DrawDiagnostics(vg, backend, atmosphere, page);
         else DrawHome(vg, backend, controllerPage);
         if (about) DrawAbout(vg);
         if (confirm) DrawConfirmation(vg, backend);
@@ -168,13 +172,18 @@ int main(int argc, char** argv) {
         hidInitializeTouchScreen();
         backend.Refresh();
         bool touching = false, confirm = false, diagnostics = false, about = false;
+        ColorEditor editor;
         unsigned page = 0;
         unsigned controllerPage = 0;
         bool trackingSwipe = false;
         int swipeStartX = 0, swipeStartY = 0, swipeLastX = 0, swipeLastY = 0;
         while (appletMainLoop()) {
             backend.Update();
-            backend.AutoRefresh(confirm);
+            backend.AutoRefresh(confirm || editor.open);
+            if (editor.reload && !backend.Running()) {
+                editor.Select(backend, 0);
+                editor.reload = false;
+            }
             const unsigned controllerPages = ControllerPageCount(backend);
             controllerPage = std::min(controllerPage, controllerPages - 1);
             padUpdate(&pad);
@@ -184,8 +193,21 @@ int main(int argc, char** argv) {
             const bool pressed = touch.count && !touching;
             const bool released = !touch.count && touching;
             touching = touch.count != 0;
-            if (confirm || diagnostics || about || touch.count > 1) trackingSwipe = false;
-            if (pressed && !confirm && !diagnostics && !about && touch.count == 1) {
+            if (!editor.open || editor.browser.open || editor.confirm || editor.advanced || backend.Running() || touch.count != 1) {
+                editor.sliderChannel = -1;
+            } else {
+                const int x = static_cast<int>(touch.touches[0].x);
+                const int y = static_cast<int>(touch.touches[0].y);
+                if (pressed && x >= 788 && x <= 1112 && y >= 218 && y < 494 && (y - 218) % 46 < 40) {
+                    editor.sliderChannel = (y - 218) / 46;
+                    editor.channel = static_cast<unsigned>(editor.sliderChannel);
+                }
+                if (editor.sliderChannel >= 0) {
+                    editor.rgb[editor.sliderChannel] = static_cast<u8>((std::clamp(x - 800, 0, 300) * 255 + 150) / 300);
+                }
+            }
+            if (editor.open || confirm || diagnostics || about || touch.count > 1) trackingSwipe = false;
+            if (pressed && !editor.open && !confirm && !diagnostics && !about && touch.count == 1) {
                 swipeStartX = swipeLastX = static_cast<int>(touch.touches[0].x);
                 swipeStartY = swipeLastY = static_cast<int>(touch.touches[0].y);
                 trackingSwipe = controllerPages > 1 && swipeStartX >= 56 && swipeStartX <= 1224 &&
@@ -204,10 +226,52 @@ int main(int argc, char** argv) {
                 }
                 trackingSwipe = false;
             }
+            if (editor.open && (pressed || down)) editor.inputMessage.clear();
             if (pressed) {
                 const auto x = touch.touches[0].x;
                 const auto y = touch.touches[0].y;
-                if (about) {
+                if (editor.open) {
+                    if (!backend.Running()) {
+                        if (editor.browser.open) {
+                            if (y >= 644 && y <= 696) {
+                                if (x >= 56 && x <= 276) down |= HidNpadButton_L;
+                                if (x >= 293 && x <= 513) down |= HidNpadButton_R;
+                                if (x >= 530 && x <= 750) down |= HidNpadButton_X;
+                                if (x >= 767 && x <= 987) down |= HidNpadButton_A;
+                                if (x >= 1004 && x <= 1224) down |= HidNpadButton_B;
+                            } else if (x >= 76 && x <= 1204 && y >= 190 && y < 526 && (y - 190) % 48 < 44) {
+                                const size_t index = editor.browser.selected / 7 * 7 + (y - 190) / 48;
+                                if (index < editor.browser.entries.size()) {
+                                    editor.browser.selected = index;
+                                    down |= HidNpadButton_A;
+                                }
+                            }
+                        } else if (editor.confirm) {
+                            if (y >= 450 && y <= 502) {
+                                if (x >= 200 && x <= 600) down |= HidNpadButton_B;
+                                if (x >= 640 && x <= 1080) down |= HidNpadButton_A;
+                            }
+                        } else if (x >= 992 && x <= 1224 && y >= 42 && y <= 94) {
+                            down |= HidNpadButton_Minus;
+                        } else if (y >= 644 && y <= 696) {
+                            if (x >= 56 && x <= 276) down |= HidNpadButton_X;
+                            if (x >= 293 && x <= 513) down |= HidNpadButton_Y;
+                            if (x >= 530 && x <= 750) down |= HidNpadButton_Plus;
+                            if (x >= 767 && x <= 987) down |= HidNpadButton_A;
+                            if (x >= 1004 && x <= 1224) down |= HidNpadButton_B;
+                        } else if (y >= 136 && y <= 166) down |= x < 640 ? HidNpadButton_L : HidNpadButton_R;
+                        else if (x >= 550 && x <= 1182 && y >= 218 && y < 494) {
+                            editor.channel = (y - 218) / 46;
+                            if (editor.advanced && x >= 846 && x <= 910) editor.Adjust(-1);
+                            if (editor.advanced && x >= 1054 && x <= 1118) editor.Adjust(1);
+                            if (editor.advanced && x >= 924 && x <= 1038 && (y - 218) % 46 >= 3 && (y - 218) % 46 <= 37) {
+                                editor.EditValue();
+                                down = 0;
+                                padUpdate(&pad);
+                            }
+                        }
+                    }
+                } else if (about) {
                     if (x >= 700 && x <= 1000 && y >= 530 && y <= 582) down |= HidNpadButton_B;
                 } else if (confirm && y >= 450 && y <= 502) {
                     if (x >= 200 && x <= 600) down |= HidNpadButton_B;
@@ -219,10 +283,11 @@ int main(int argc, char** argv) {
                         if (x >= 644 && x <= 972) down |= HidNpadButton_Y;
                         if (x >= 992 && x <= 1224) down |= HidNpadButton_B;
                     } else {
-                        if (x >= 56 && x <= 300) down |= HidNpadButton_Y;
-                        if (x >= 320 && x <= 520) down |= HidNpadButton_ZL;
-                        if (x >= 540 && x <= 972) down |= HidNpadButton_Minus;
-                        if (x >= 992 && x <= 1224) down |= HidNpadButton_Plus;
+                        if (x >= 56 && x <= 276) down |= HidNpadButton_Y;
+                        if (x >= 293 && x <= 513) down |= HidNpadButton_ZL;
+                        if (x >= 530 && x <= 750) down |= HidNpadButton_Minus;
+                        if (x >= 767 && x <= 987) down |= HidNpadButton_ZR;
+                        if (x >= 1004 && x <= 1224) down |= HidNpadButton_Plus;
                     }
                 } else if (!confirm && !diagnostics && x >= 56 && x <= 240 && y >= 594 && y <= 630) {
                     down |= HidNpadButton_X;
@@ -234,7 +299,67 @@ int main(int argc, char** argv) {
                     down |= x < 640 ? HidNpadButton_L : HidNpadButton_R;
                 }
             }
-            if (about) {
+            if (editor.open) {
+                if (!backend.Running()) {
+                    if (editor.browser.open) {
+                        auto& browser = editor.browser;
+                        if (down & (HidNpadButton_B | HidNpadButton_Plus)) browser.open = false;
+                        else if (down & HidNpadButton_X) browser.Parent();
+                        else if ((down & HidNpadButton_Up) && browser.selected) --browser.selected;
+                        else if ((down & HidNpadButton_Down) && browser.selected + 1 < browser.entries.size()) ++browser.selected;
+                        else if ((down & HidNpadButton_L) && browser.selected >= 7) browser.selected -= 7;
+                        else if ((down & HidNpadButton_R) && (browser.selected / 7 + 1) * 7 < browser.entries.size())
+                            browser.selected = std::min(browser.selected + 7, browser.entries.size() - 1);
+                        else if ((down & HidNpadButton_A) && !browser.entries.empty()) {
+                            const std::string path = browser.SelectedPath();
+                            if (browser.entries[browser.selected].directory) browser.Read(path);
+                            else if (editor.CanApply(backend)) {
+                                std::array<u8, 6> colors{};
+                                if (backend.ReadColorBackup(backend.Targets()[editor.target].padId, path, colors)) {
+                                    editor.beforeRestore = editor.rgb;
+                                    editor.rgb = colors;
+                                    editor.restorePath = path;
+                                    editor.restore = editor.confirm = true;
+                                    browser.open = false;
+                                } else browser.message = backend.ColorMessage();
+                            } else browser.message = "Select a verified wireless Joy-Con before restoring.";
+                        }
+                    } else if (editor.confirm) {
+                        if (down & (HidNpadButton_B | HidNpadButton_Plus)) {
+                            if (editor.restore) editor.rgb = editor.beforeRestore;
+                            editor.restore = editor.confirm = false;
+                        } else if (down & HidNpadButton_A) {
+                            editor.confirm = false;
+                            if (editor.CanApply(backend)) {
+                                if (editor.restore) backend.RestoreColors(backend.Targets()[editor.target].padId, editor.restorePath, editor.rgb);
+                                else backend.ApplyColors(backend.Targets()[editor.target].padId, editor.Body(), editor.Buttons());
+                            }
+                            editor.restore = false;
+                        }
+                    } else if (down & HidNpadButton_B) editor.open = false;
+                    else if ((down & HidNpadButton_Plus) && editor.CanApply(backend)) editor.browser.Open();
+                    else if (down & HidNpadButton_Minus) {
+                        editor.advanced = !editor.advanced;
+                        editor.sliderChannel = -1;
+                    } else if (down & HidNpadButton_X) {
+                        backend.Refresh();
+                        editor.Select(backend, 0);
+                        editor.reload = backend.Running();
+                    } else if ((down & HidNpadButton_Y) && editor.CanApply(backend)) {
+                        backend.BackupColors(backend.Targets()[editor.target].padId);
+                    } else if ((down & HidNpadButton_A) && editor.CanApply(backend)) editor.confirm = true;
+                    else {
+                        if ((down & HidNpadButton_L) && editor.target) editor.Select(backend, editor.target - 1);
+                        if ((down & HidNpadButton_R) && editor.target + 1 < backend.Targets().size()) editor.Select(backend, editor.target + 1);
+                        if ((down & HidNpadButton_Up) && editor.channel) --editor.channel;
+                        if ((down & HidNpadButton_Down) && editor.channel < 5) ++editor.channel;
+                        if (down & HidNpadButton_Left) editor.Adjust(-1);
+                        if (down & HidNpadButton_Right) editor.Adjust(1);
+                        if (down & HidNpadButton_ZL) editor.Adjust(-16);
+                        if (down & HidNpadButton_ZR) editor.Adjust(16);
+                    }
+                }
+            } else if (about) {
                 if (down & (HidNpadButton_B | HidNpadButton_Plus)) about = false;
             } else if (diagnostics) {
                 if (down & (HidNpadButton_Y | HidNpadButton_B | HidNpadButton_Plus)) diagnostics = false;
@@ -250,7 +375,10 @@ int main(int argc, char** argv) {
                     confirm = false;
                     backend.Start();
                 }
-            } else if (down & HidNpadButton_ZL) {
+            } else if ((down & HidNpadButton_ZL) && !backend.Running()) {
+                editor.open = true;
+                editor.Select(backend, 0);
+            } else if (down & HidNpadButton_ZR) {
                 about = true;
             } else if (down & HidNpadButton_Y) {
                 diagnostics = true;
@@ -265,11 +393,11 @@ int main(int argc, char** argv) {
             } else if (down & HidNpadButton_Minus) {
                 backend.ExplainUnavailable();
             }
-            if (!diagnostics && !confirm && !about) {
+            if (!editor.open && !diagnostics && !confirm && !about) {
                 if ((down & HidNpadButton_L) && controllerPage) --controllerPage;
                 if ((down & HidNpadButton_R) && controllerPage + 1 < controllerPages) ++controllerPage;
             }
-            display.Draw(backend, confirm, diagnostics, about, page, controllerPage);
+            display.Draw(backend, confirm, diagnostics, about, page, controllerPage, editor);
         }
         // Complete any already-started persistent command sequence before releasing services.
         while (backend.Running()) { backend.Update(); svcSleepThread(1000000); }

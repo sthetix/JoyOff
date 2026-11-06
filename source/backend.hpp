@@ -30,6 +30,12 @@ class JoyBackend {
     bool driverReady = false;
     bool running = false;
     bool identifying = false;
+    int colorPhase = 0;
+    bool colorBackupOnly = false;
+    size_t colorTarget = 0;
+    std::array<u8, 6> requestedColors{};
+    std::string colorMessage = "Select a wireless Joy-Con. Colors are saved permanently to the controller.";
+    std::string colorBackup;
     SharedMemory memory{};
     bool mapped = false;
     const BtdrvCircularBuffer* ring = nullptr;
@@ -53,10 +59,19 @@ class JoyBackend {
     void Receive();
     void Response(const BtdrvHidReportEventInfo& event, size_t size, u64 tick);
     void Fail(JoyTarget& target, const char* text, Result rc = 0);
+    void SendColorCommand();
+    void ColorResponse(const u8* reply, size_t size);
+    void FinishColor(const char* text);
+    void BeginColors(HidsysUniquePadId padId, u32 body, u32 buttons, bool backupOnly);
 public:
     ~JoyBackend();
     void Refresh();
     void Start();
+    void ApplyColors(HidsysUniquePadId padId, u32 body, u32 buttons);
+    void BackupColors(HidsysUniquePadId padId);
+    bool ReadColorBackup(HidsysUniquePadId padId, const std::string& path, std::array<u8, 6>& colors);
+    void RestoreColors(HidsysUniquePadId padId, const std::string& path, const std::array<u8, 6>& preview);
+    const std::string& ColorMessage() const { return colorMessage; }
     void Update();
     void AutoRefresh(bool paused);
     void ExplainUnavailable();

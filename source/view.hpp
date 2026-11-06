@@ -277,10 +277,11 @@ void DrawHome(NVGcontext* vg, const JoyBackend& backend, unsigned page) {
     if (backend.Running()) std::snprintf(action, sizeof(action), "Working...");
     else if (ReadyCount(backend)) std::snprintf(action, sizeof(action), "Turn Off All (%u)", ReadyCount(backend));
     else std::snprintf(action, sizeof(action), "Turn Off All");
-    Button(vg, 56, 644, 244, "Y", "Diagnostics", true);
-    Button(vg, 320, 644, 200, "ZL", "About", true);
-    Button(vg, 540, 644, 432, "-", action, backend.Ready(), true);
-    Button(vg, 992, 644, 232, "+", "Exit", !backend.Running());
+    Button(vg, 56, 644, 220, "Y", "Diagnostics", true);
+    Button(vg, 293, 644, 220, "ZL", "Colors", !backend.Running());
+    Button(vg, 530, 644, 220, "-", action, backend.Ready(), true);
+    Button(vg, 767, 644, 220, "ZR", "About", true);
+    Button(vg, 1004, 644, 220, "+", "Exit", !backend.Running());
 }
 
 void DrawConfirmation(NVGcontext* vg, const JoyBackend& backend) {
@@ -294,4 +295,218 @@ void DrawConfirmation(NVGcontext* vg, const JoyBackend& backend) {
     Text(vg, 200, 397, "Includes ready controllers on every page. Touch remains available.", 18, Theme::Muted);
     Button(vg, 200, 450, 400, "B", "Cancel", true);
     Button(vg, 640, 450, 440, "-", "Confirm Turn Off", true, true);
+}
+
+struct ColorFileBrowser {
+    struct Entry { std::string name; bool directory; };
+    bool open = false;
+    std::string path = "sdmc:/switch/JoyOff";
+    std::string message;
+    std::vector<Entry> entries;
+    size_t selected = 0;
+
+    bool Read(const std::string& directory) {
+        entries.clear();
+        selected = 0;
+        path = directory;
+        DIR* dir = opendir(path.c_str());
+        if (!dir) { message = "Cannot open folder. Use Parent to browse another location."; return false; }
+        bool complete = true;
+        while (true) {
+            errno = 0;
+            const auto* entry = readdir(dir);
+            if (!entry) { complete = errno == 0; break; }
+            const std::string name = entry->d_name;
+            if (name == "." || name == "..") continue;
+            const std::string full = path + (path.back() == '/' ? "" : "/") + name;
+            struct stat info{};
+            if (stat(full.c_str(), &info) != 0) continue;
+            const bool folder = S_ISDIR(info.st_mode);
+            if (folder || (S_ISREG(info.st_mode) && name.size() >= 4 && name.substr(name.size() - 4) == ".bin"))
+                entries.push_back({name, folder});
+        }
+        closedir(dir);
+        std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
+            return a.directory != b.directory ? a.directory : a.name < b.name;
+        });
+        message = !complete ? "Folder listing incomplete. Reopen the folder to retry."
+            : entries.empty() ? "No folders or .bin files here." : "Select a folder or an original JoyOff color backup (.bin).";
+        return complete;
+    }
+    void Open() {
+        open = true;
+        if (!Read("sdmc:/switch/JoyOff")) Read("sdmc:/");
+    }
+    void Parent() {
+        if (path == "sdmc:/") return;
+        const size_t slash = path.find_last_of('/');
+        Read(slash <= 6 ? "sdmc:/" : path.substr(0, slash));
+    }
+    std::string SelectedPath() const {
+        return path + (path.back() == '/' ? "" : "/") + entries[selected].name;
+    }
+};
+
+struct ColorEditor {
+    bool open = false;
+    bool confirm = false;
+    bool reload = false;
+    bool advanced = false;
+    int sliderChannel = -1;
+    ColorFileBrowser browser;
+    bool restore = false;
+    std::string restorePath;
+    std::array<u8, 6> beforeRestore{};
+    std::string inputMessage;
+    size_t target = 0;
+    unsigned channel = 0;
+    std::array<u8, 6> rgb{128, 128, 128, 40, 40, 40};
+
+    u32 Body() const { return rgb[0] | (u32(rgb[1]) << 8) | (u32(rgb[2]) << 16); }
+    u32 Buttons() const { return rgb[3] | (u32(rgb[4]) << 8) | (u32(rgb[5]) << 16); }
+    void Select(const JoyBackend& backend, size_t index) {
+        target = index;
+        if (index >= backend.Targets().size()) return;
+        const auto& device = backend.Targets()[index];
+        if (!device.colorsKnown) { rgb = {128, 128, 128, 40, 40, 40}; return; }
+        for (unsigned i = 0; i < 3; ++i) {
+            rgb[i] = static_cast<u8>(device.bodyColor >> (i * 8));
+            rgb[i + 3] = static_cast<u8>(device.buttonsColor >> (i * 8));
+        }
+    }
+    void Adjust(int amount) { rgb[channel] = static_cast<u8>(std::clamp(int(rgb[channel]) + amount, 0, 255)); }
+    void EditValue() {
+        SwkbdConfig keyboard{};
+        if (R_FAILED(swkbdCreate(&keyboard, 0))) {
+            inputMessage = "Numeric keyboard unavailable. Use the +/- buttons instead.";
+            return;
+        }
+        swkbdConfigMakePresetDefault(&keyboard);
+        swkbdConfigSetType(&keyboard, SwkbdType_NumPad);
+        swkbdConfigSetHeaderText(&keyboard, "RGB value");
+        swkbdConfigSetGuideText(&keyboard, "Enter a value from 0 to 255");
+        swkbdConfigSetStringLenMin(&keyboard, 1);
+        swkbdConfigSetStringLenMax(&keyboard, 3);
+        char text[16]{};
+        std::snprintf(text, sizeof(text), "%u", static_cast<unsigned>(rgb[channel]));
+        while (true) {
+            swkbdConfigSetInitialText(&keyboard, text);
+            if (R_FAILED(swkbdShow(&keyboard, text, sizeof(text)))) break;
+            unsigned value = 0;
+            bool valid = text[0] != '\0';
+            for (const char* digit = text; *digit; ++digit) {
+                if (*digit < '0' || *digit > '9') { valid = false; break; }
+                value = value * 10 + static_cast<unsigned>(*digit - '0');
+                if (value > 255) { valid = false; break; }
+            }
+            if (valid) { rgb[channel] = static_cast<u8>(value); break; }
+            swkbdConfigSetGuideText(&keyboard, "Invalid value. Enter digits from 0 to 255");
+        }
+        swkbdClose(&keyboard);
+    }
+    bool CanApply(const JoyBackend& backend) const {
+        if (backend.Running() || target >= backend.Targets().size()) return false;
+        const auto& device = backend.Targets()[target];
+        return !device.wired && !device.failed && !device.done && device.phase == 0 && device.side;
+    }
+};
+
+void DrawColors(NVGcontext* vg, const JoyBackend& backend, const ColorEditor& editor) {
+    Button(vg, 992, 42, 232, "-", editor.advanced ? "Sliders" : "Advanced", !backend.Running());
+    Rectangle(vg, 56, 116, 1168, 410, Theme::Panel, 20);
+    const JoyTarget* device = editor.target < backend.Targets().size() ? &backend.Targets()[editor.target] : nullptr;
+    char label[128];
+    if (device) std::snprintf(label, sizeof(label), "L / R: Controller %u of %u - %s",
+        static_cast<unsigned>(editor.target + 1), static_cast<unsigned>(backend.Targets().size()), device->name.c_str());
+    else std::snprintf(label, sizeof(label), "No Joy-Con detected. Connect and Refresh.");
+    Text(vg, 86, 136, label, 23, Theme::Accent);
+    Text(vg, 86, 174, device && device->wired ? "Attached: detach and connect over Bluetooth, then Refresh."
+        : "Apply requires a verified wireless Joy-Con. Keep it connected until verification finishes.", 18, Theme::Muted);
+    JoyConIcon(vg, 155, 225, 0.85f, device && device->side == 2, true, editor.Body(), editor.Buttons());
+    char hex[80];
+    std::snprintf(hex, sizeof(hex), "Body #%02X%02X%02X   Buttons #%02X%02X%02X",
+        editor.rgb[0], editor.rgb[1], editor.rgb[2], editor.rgb[3], editor.rgb[4], editor.rgb[5]);
+    Text(vg, 86, 490, hex, 18);
+    const char* names[] = {"Body Red", "Body Green", "Body Blue", "Buttons Red", "Buttons Green", "Buttons Blue"};
+    for (unsigned i = 0; i < editor.rgb.size(); ++i) {
+        const float y = 218 + i * 46;
+        Rectangle(vg, 550, y, 632, 40, i == editor.channel ? Theme::Selected : Theme::Panel, 8);
+        Text(vg, 568, y + 8, names[i], 20, i == editor.channel ? Theme::Accent : Theme::Foreground);
+        char value[8];
+        std::snprintf(value, sizeof(value), "%u", static_cast<unsigned>(editor.rgb[i]));
+        if (editor.advanced) {
+            Rectangle(vg, 846, y + 3, 64, 34, Theme::Selected, 6);
+            Text(vg, 871, y + 6, "-", 24);
+            Rectangle(vg, 924, y + 3, 114, 34, Theme::Background, 6);
+            Text(vg, 948, y + 8, value, 20);
+            Rectangle(vg, 1054, y + 3, 64, 34, Theme::Selected, 6);
+            Text(vg, 1077, y + 6, "+", 24);
+        } else {
+            const unsigned shift = (i % 3) * 8;
+            const u32 low = (i < 3 ? editor.Body() : editor.Buttons()) & ~(0xffu << shift);
+            const u32 high = low | (0xffu << shift);
+            nvgBeginPath(vg);
+            nvgRoundedRect(vg, 800, y + 15, 300, 10, 5);
+            nvgFillPaint(vg, nvgLinearGradient(vg, 800, y + 20, 1100, y + 20,
+                ControllerColor(low), ControllerColor(high)));
+            nvgFill(vg);
+            const float thumb = 800 + editor.rgb[i] * 300.0f / 255;
+            Circle(vg, thumb, y + 20, 12, Theme::Foreground);
+            Circle(vg, thumb, y + 20, 8, i == editor.channel ? Theme::Accent : Theme::Selected);
+            Text(vg, 1128, y + 8, value, 20);
+        }
+    }
+    TextBox(vg, 56, 540, 1168, editor.inputMessage.empty() ? backend.ColorMessage().c_str() : editor.inputMessage.c_str(), 17, Theme::Muted);
+    Text(vg, 56, 610, editor.advanced
+        ? "Tap a number to type (0-255)   Left/Right: +/-1   ZL/ZR: +/-16   Minus: Sliders"
+        : "Drag RGB sliders to preview   L/R: controller   Minus: Advanced (+/-)", 17);
+    Button(vg, 56, 644, 220, "X", "Refresh", !backend.Running());
+    Button(vg, 293, 644, 220, "Y", "Backup Colors", editor.CanApply(backend));
+    Button(vg, 530, 644, 220, "+", "Restore Colors", editor.CanApply(backend));
+    Button(vg, 767, 644, 220, "A", backend.Running() ? "Working..." : "Apply Colors", editor.CanApply(backend), true);
+    Button(vg, 1004, 644, 220, "B", "Back", !backend.Running());
+    if (editor.confirm) {
+        Rectangle(vg, 0, 0, Width, Height, nvgRGBA(0, 0, 0, 210), 0);
+        Rectangle(vg, 160, 170, 960, 380, Theme::Panel, 22);
+        Text(vg, 200, 205, editor.restore ? "Restore these colors to this Joy-Con?" : "Apply colors to this Joy-Con?", 28, Theme::Accent);
+        if (editor.restore) {
+            nvgSave(vg);
+            nvgScissor(vg, 200, 250, 745, 52);
+            TextBox(vg, 200, 250, 745, editor.restorePath.c_str(), 16, Theme::Muted);
+            nvgRestore(vg);
+            JoyConIcon(vg, 1000, 260, 0.35f, device && device->side == 2, true, editor.Body(), editor.Buttons());
+        }
+        TextBox(vg, 200, editor.restore ? 313 : 267, editor.restore ? 745 : 865, editor.restore
+            ? "The preview shows the selected backup. Current colors will be backed up before restoring."
+            : "This permanently changes the body and button colors stored in the selected Joy-Con. Original colors are backed up to /switch/JoyOff/ before writing.", 22, Theme::Foreground);
+        TextBox(vg, 200, 370, 865, "Keep the Joy-Con wireless and connected. System colors may refresh after reconnecting.", 20, Theme::Warning);
+        Button(vg, 200, 450, 400, "B", "Cancel", true);
+        Button(vg, 640, 450, 440, "A", editor.restore ? "Confirm Restore" : "Confirm Apply", true, true);
+    }
+    if (editor.browser.open) {
+        const auto& browser = editor.browser;
+        Rectangle(vg, 0, 0, Width, Height, Theme::Background, 0);
+        Text(vg, 56, 37, "Select color backup", 36, Theme::Accent);
+        Rectangle(vg, 56, 116, 1168, 500, Theme::Panel, 20);
+        nvgSave(vg);
+        nvgScissor(vg, 80, 132, 1120, 48);
+        TextBox(vg, 80, 132, 1120, browser.path.c_str(), 18, Theme::Muted);
+        nvgRestore(vg);
+        const size_t first = browser.selected / 7 * 7;
+        for (size_t i = first; i < browser.entries.size() && i < first + 7; ++i) {
+            const float y = 190 + (i - first) * 48;
+            Rectangle(vg, 76, y, 1128, 44, i == browser.selected ? Theme::Selected : Theme::Panel, 8);
+            const std::string name = (browser.entries[i].directory ? "[Folder] " : "") + browser.entries[i].name;
+            nvgSave(vg);
+            nvgScissor(vg, 90, y, 1100, 44);
+            Text(vg, 94, y + 11, name.c_str(), 19, i == browser.selected ? Theme::Accent : Theme::Foreground);
+            nvgRestore(vg);
+        }
+        TextBox(vg, 80, 540, 1120, browser.message.c_str(), 18, Theme::Muted);
+        Button(vg, 56, 644, 220, "L", "Previous", first != 0);
+        Button(vg, 293, 644, 220, "R", "Next", first + 7 < browser.entries.size());
+        Button(vg, 530, 644, 220, "X", "Parent", browser.path != "sdmc:/");
+        Button(vg, 767, 644, 220, "A", "Open / Select", !browser.entries.empty(), true);
+        Button(vg, 1004, 644, 220, "B", "Cancel", true);
+    }
 }

@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <cerrno>
+#include <sys/stat.h>
 
 namespace {
 constexpr u64 timeoutNs = 2000000000ULL;
@@ -423,6 +425,207 @@ void JoyBackend::Start() {
     }
 }
 
+void JoyBackend::ApplyColors(HidsysUniquePadId padId, u32 body, u32 buttons) {
+    BeginColors(padId, body, buttons, false);
+}
+
+void JoyBackend::BackupColors(HidsysUniquePadId padId) {
+    BeginColors(padId, 0, 0, true);
+}
+
+bool JoyBackend::ReadColorBackup(HidsysUniquePadId padId, const std::string& path, std::array<u8, 6>& colors) {
+    if (running) return false;
+    const auto found = std::find_if(targets.begin(), targets.end(), [&](const JoyTarget& t) { return t.padId.id == padId.id; });
+    if (found == targets.end()) { colorMessage = "Selected Joy-Con is unavailable."; return false; }
+    struct stat info{};
+    if (stat(path.c_str(), &info) != 0 || !S_ISREG(info.st_mode) || info.st_size != 6) {
+        colorMessage = "Invalid color backup. Select a six-byte JoyOff colors .bin file.";
+        return false;
+    }
+    FILE* file = std::fopen(path.c_str(), "rb");
+    if (!file) { colorMessage = "Cannot open selected backup."; return false; }
+    const bool read = std::fread(colors.data(), 1, colors.size(), file) == colors.size() &&
+        std::fgetc(file) == EOF && !std::ferror(file);
+    const int closed = std::fclose(file);
+    if (!read || closed != 0) { colorMessage = "Cannot read selected backup."; return false; }
+    const auto* address = reinterpret_cast<const u8*>(&found->address);
+    char expected[80];
+    std::snprintf(expected, sizeof(expected), "colors-%02X%02X%02X%02X%02X%02X-%02X%02X%02X%02X%02X%02X.bin",
+        address[0], address[1], address[2], address[3], address[4], address[5],
+        colors[0], colors[1], colors[2], colors[3], colors[4], colors[5]);
+    const size_t slash = path.find_last_of('/');
+    if (path.substr(slash == std::string::npos ? 0 : slash + 1) != expected) {
+        colorMessage = "Backup name or contents do not match this Joy-Con. Select its original JoyOff backup file.";
+        return false;
+    }
+    return true;
+}
+
+void JoyBackend::RestoreColors(HidsysUniquePadId padId, const std::string& path, const std::array<u8, 6>& preview) {
+    std::array<u8, 6> colors{};
+    if (!ReadColorBackup(padId, path, colors)) return;
+    if (colors != preview) { colorMessage = "Backup changed since preview. Select the file again."; return; }
+    const u32 body = colors[0] | (u32(colors[1]) << 8) | (u32(colors[2]) << 16);
+    const u32 buttons = colors[3] | (u32(colors[4]) << 8) | (u32(colors[5]) << 16);
+    BeginColors(padId, body, buttons, false);
+}
+
+void JoyBackend::BeginColors(HidsysUniquePadId padId, u32 body, u32 buttons, bool backupOnly) {
+    if (running) return;
+    const auto found = std::find_if(targets.begin(), targets.end(), [&](const JoyTarget& t) {
+        return t.padId.id == padId.id;
+    });
+    if (found == targets.end() || found->failed || found->done || found->wired || found->phase != 0) {
+        colorMessage = "No verified wireless Joy-Con selected. Detach, connect and Refresh first.";
+        return;
+    }
+    if (!Observe()) { colorMessage = message; return; }
+    colorTarget = static_cast<size_t>(found - targets.begin());
+    colorBackupOnly = backupOnly;
+    for (unsigned i = 0; i < 3; ++i) {
+        requestedColors[i] = static_cast<u8>(body >> (i * 8));
+        requestedColors[i + 3] = static_cast<u8>(buttons >> (i * 8));
+    }
+    colorBackup.clear();
+    colorPhase = 1;
+    running = true;
+    colorMessage = "Checking identity before reading and backing up the original colors...";
+    SendColorCommand();
+}
+
+void JoyBackend::FinishColor(const char* text) {
+    colorMessage = text;
+    if (!colorBackup.empty()) colorMessage += " Backup: " + colorBackup;
+    DebugLog("Color operation: %s", colorMessage.c_str());
+    colorPhase = 0;
+    running = false;
+}
+
+void JoyBackend::SendColorCommand() {
+    auto& target = targets[colorTarget];
+    bool connected = false, wired = false;
+    if (!ReadTransport(target.padId, target.side, connected, wired) || !connected || wired) {
+        FinishColor(colorPhase < 4 ? "Wireless connection unavailable; stopped."
+            : "Wireless connection lost; written colors could not be verified.");
+        return;
+    }
+    BtdrvHidReport report{};
+    report.size = 49;
+    report.data[0] = 0x01;
+    report.data[1] = target.counter++ & 0x0f;
+    const u8 neutral[] = {0x00, 0x01, 0x40, 0x40};
+    std::memcpy(report.data + 2, neutral, sizeof(neutral));
+    std::memcpy(report.data + 6, neutral, sizeof(neutral));
+    report.data[10] = colorPhase == 1 ? 0x02 : colorPhase == 3 ? 0x11 : 0x10;
+    if (colorPhase != 1) {
+        report.data[11] = 0x50;
+        report.data[12] = 0x60;
+        report.data[15] = requestedColors.size();
+        if (colorPhase == 3) {
+            std::memcpy(report.data + 16, requestedColors.data(), requestedColors.size());
+            target.colorsKnown = false;
+        }
+    }
+    target.sentTick = armGetSystemTick();
+    target.deadline = Now() + timeoutNs;
+    const Result rc = btdrvWriteHidData(target.address, &report);
+    DebugLog("Color SEND phase=%d subcmd=%02X rc=%08X", colorPhase, report.data[10], rc);
+    if (R_FAILED(rc)) FinishColor(colorPhase >= 3
+        ? "Color command failed; stored colors are unconfirmed. Reconnect and check before retrying."
+        : "Color request failed; no colors written.");
+}
+
+void JoyBackend::ColorResponse(const u8* reply, size_t size) {
+    const u8 command = colorPhase == 1 ? 0x02 : colorPhase == 3 ? 0x11 : 0x10;
+    if (reply[14] != command) return;
+    if (!(reply[13] & 0x80)) {
+        FinishColor(colorPhase >= 3 ? "Color command rejected; stored colors are unconfirmed."
+            : "Controller rejected request; no colors written.");
+        return;
+    }
+    auto& target = targets[colorTarget];
+    if (colorPhase == 1) {
+        if (size < 25 || reply[17] != target.side) {
+            FinishColor("Identity mismatch; no colors written.");
+            return;
+        }
+        colorPhase = 2;
+        SendColorCommand();
+    } else if (colorPhase == 3) {
+        if (size < 16 || reply[15] != 0) {
+            FinishColor("SPI write rejected or unconfirmed. Reconnect and check colors.");
+            return;
+        }
+        colorPhase = 4;
+        colorMessage = "Colors written. Reading back SPI to verify...";
+        SendColorCommand();
+    } else {
+        // SPI read replies echo the address and length before the data.
+        if (size < 26 || reply[15] != 0x50 || reply[16] != 0x60 || reply[17] || reply[18] || reply[19] != 6) return;
+        if (colorPhase == 4) {
+            if (std::memcmp(reply + 20, requestedColors.data(), requestedColors.size()) != 0) {
+                target.colorsKnown = false;
+                FinishColor("Read-back mismatch. Stored colors differ from the preview; check before retrying.");
+                return;
+            }
+            target.bodyColor = requestedColors[0] | (u32(requestedColors[1]) << 8) | (u32(requestedColors[2]) << 16);
+            target.buttonsColor = requestedColors[3] | (u32(requestedColors[4]) << 8) | (u32(requestedColors[5]) << 16);
+            target.colorsKnown = true;
+            FinishColor("Colors verified. Reconnect the Joy-Con to refresh the system color display.");
+            return;
+        }
+        if (!colorBackupOnly && std::memcmp(reply + 20, requestedColors.data(), requestedColors.size()) == 0) {
+            target.bodyColor = requestedColors[0] | (u32(requestedColors[1]) << 8) | (u32(requestedColors[2]) << 16);
+            target.buttonsColor = requestedColors[3] | (u32(requestedColors[4]) << 8) | (u32(requestedColors[5]) << 16);
+            target.colorsKnown = true;
+            FinishColor("The Joy-Con already stores these colors; no write needed.");
+            return;
+        }
+        if ((mkdir("sdmc:/switch", 0777) != 0 && errno != EEXIST) ||
+            (mkdir("sdmc:/switch/JoyOff", 0777) != 0 && errno != EEXIST)) {
+            FinishColor("Cannot create backup directory; no colors written.");
+            return;
+        }
+        const auto* address = reinterpret_cast<const u8*>(&target.address);
+        char path[192];
+        std::snprintf(path, sizeof(path), "sdmc:/switch/JoyOff/colors-%02X%02X%02X%02X%02X%02X-%02X%02X%02X%02X%02X%02X.bin",
+            address[0], address[1], address[2], address[3], address[4], address[5],
+            reply[20], reply[21], reply[22], reply[23], reply[24], reply[25]);
+        // Reuse only an exact backup; never overwrite an existing original.
+        struct stat info{};
+        if (stat(path, &info) == 0) {
+            if (info.st_size != 6) { FinishColor("Existing backup is invalid; no colors written."); return; }
+        } else {
+            if (errno != ENOENT) { FinishColor("Cannot inspect backup; no colors written."); return; }
+            FILE* file = std::fopen(path, "wb");
+            if (!file) { FinishColor("Cannot save original colors; no colors written."); return; }
+            const bool saved = std::fwrite(reply + 20, 1, 6, file) == 6;
+            const int closed = std::fclose(file);
+            if (!saved || closed != 0) { FinishColor("Backup write failed; no colors written."); return; }
+        }
+        std::array<u8, 6> backup{};
+        FILE* file = std::fopen(path, "rb");
+        if (!file) { FinishColor("Cannot read backup; no colors written."); return; }
+        const bool read = std::fread(backup.data(), 1, backup.size(), file) == backup.size();
+        const int closed = std::fclose(file);
+        if (!read || closed != 0 || std::memcmp(backup.data(), reply + 20, backup.size()) != 0) {
+            FinishColor("Backup verification failed; no colors written.");
+            return;
+        }
+        colorBackup = path;
+        if (colorBackupOnly) {
+            target.bodyColor = reply[20] | (u32(reply[21]) << 8) | (u32(reply[22]) << 16);
+            target.buttonsColor = reply[23] | (u32(reply[24]) << 8) | (u32(reply[25]) << 16);
+            target.colorsKnown = true;
+            FinishColor("Color backup saved and verified. No controller colors changed.");
+            return;
+        }
+        colorPhase = 3;
+        colorMessage = "Original colors backed up. Writing body and button colors...";
+        SendColorCommand();
+    }
+}
+
 void JoyBackend::Response(const BtdrvHidReportEventInfo& event, size_t size, u64 tick) {
     const auto& data = event.data_report.v9;
     const size_t reportOffset = offsetof(BtdrvHidReportEventInfo, data_report.v9.report.data);
@@ -435,6 +638,11 @@ void JoyBackend::Response(const BtdrvHidReportEventInfo& event, size_t size, u64
     const auto* reply = data.report.data;
     if (reply[0] != 0x21) return;
     ++observedReplies;
+    if (colorPhase) {
+        const auto& target = targets[colorTarget];
+        if (SameAddress(target.address, data.addr) && tick >= target.sentTick) ColorResponse(reply, data.report.size);
+        return;
+    }
     for (auto& target : targets) {
         if (target.done || !SameAddress(target.address, data.addr) || tick < target.sentTick ||
             reply[14] != Expected(target.phase)) continue;
@@ -524,6 +732,13 @@ void JoyBackend::Receive() {
 
 void JoyBackend::Update() {
     if (!running) return;
+    if (colorPhase) {
+        Receive();
+        if (colorPhase && Now() >= targets[colorTarget].deadline) FinishColor(colorPhase >= 3
+            ? "Color operation timed out; stored colors are unconfirmed. Reconnect and check before retrying."
+            : "Color request timed out; no colors written.");
+        return;
+    }
     Receive();
     bool checkConnections = false;
     for (auto& target : targets) {
